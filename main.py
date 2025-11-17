@@ -1,36 +1,33 @@
-# In the process of rewriting. *Non-working version*
-
 import os
 import sys
+import time
 import requests
 import json
 import openpyxl
-import time
 import random
 # import logging
 
 
 ADMIN = os.getenv('TELEGRAM_BOT_ADMIN')
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-API_URL = 'https://api.telegram.org/bot'+TOKEN
-
+API_URL = 'https://api.telegram.org/bot' + TOKEN
 
 startMessage = 'Вітаю у боті для розкладу занять! 👋\n\n' \
-             + 'Я буду надсилати вам автоматичні повідомлення на початку та в кінці уроку\n' \
-             + 'Щоб вимкнути/увімкнути сповіщення, скористайтесь командами /mute та /unmute\n\n' \
-             + 'Для отримання розкладу на сьогодні, надішліть /today\n' \
-             + 'Для розкладу на завтра, надішліть /tomorrow\n\n' \
-             + 'Для початку, давайте налаштуємо ваш розклад.'
+               + 'Я буду надсилати вам автоматичні повідомлення на початку та в кінці уроку\n' \
+               + 'Щоб вимкнути/увімкнути сповіщення, скористайтесь командами /mute та /unmute\n\n' \
+               + 'Для отримання розкладу на сьогодні, надішліть /today\n' \
+               + 'Для розкладу на завтра, надішліть /tomorrow\n\n' \
+               + 'Для початку, давайте налаштуємо ваш розклад.'
 
 helpMessage = startMessage  # needs to be done!
 
 askRole = 'Будь ласка, оберіть вашу роль:'
-keyboardRole = {'keyboard': [[{'text': 'Учень'}, {'text': 'Вчитель'}]], 
+keyboardRole = {'keyboard': [[{'text': 'Учень'}, {'text': 'Вчитель'}]],
                 'resize_keyboard': True, 'one_time_keyboard': True}
 answerRole = ('учень', 'вчитель')
 
 askGrade = 'Чудово! Тепер оберіть ваш клас:'
-keyboardGrade = {'keyboard': [[{'text': '9'}, {'text': '10'}, {'text': '11'}]], 
+keyboardGrade = {'keyboard': [[{'text': '9'}, {'text': '10'}, {'text': '11'}]],
                  'resize_keyboard': True, 'one_time_keyboard': True}
 
 askGroup = 'Будь ласка, оберіть свою групу:'
@@ -39,29 +36,42 @@ groups = {'9': ['М-21', 'ІФ-22', 'ОІ-23', 'КМ-24', 'ПА-25'],
           '11': ['М-41', 'ІФ-42', 'ПМ-43', 'ІН-ІФ-44']}
 
 askHalf = 'І останнє, оберіть вашу підгрупу:'
-keyboardHalf = {'keyboard': [[{'text': '1'}, {'text': '2'}]], 
+keyboardHalf = {'keyboard': [[{'text': '1'}, {'text': '2'}]],
                 'resize_keyboard': True, 'one_time_keyboard': True}
 
 finalMessage = 'Дякую! Налаштування завершено. Тепер ви будете отримувати повідомлення з вашим персональним розкладом.'
 teacherNote = 'Наразі функціонал для вчителів ще не розроблено, але ви все одно можете отримувати повідомлення про початок і кінець уроку. Дякуємо за розуміння!'
 unrecognizedMessage = 'Вибачте, я не зрозумів вашу відповідь. Будь ласка, скористайтесь кнопками або командами. Для допомоги надішліть /help.'
+
 scheduleSetupError = 'Будь ласка, спершу завершіть налаштування за допомогою команди /start, щоб отримати персональний розклад.'
-weekendMessage = 'Сьогодні вихідний! Відпочивайте. 🥳'
+weekendMessage = 'Цей день вихідний! Відпочивайте. 🥳'
+schedForDay = '🗓️ Ваш розклад на '
+todayUkr = 'сьогодні'
+youAreHere = '<-- 👈 Ви тут'
+weekdaysUkr = ['понеділок', 'вівторок', 'середу', 'четвер', 'п\'ятницю', 'cуботу', 'неділю']
 
 muteAnswer = '✅ Автоматичні сповіщення вимкнено. Щоб увімкнути їх знову, скористайтесь командою /unmute.'
 unmuteAnswer = '✅ Автоматичні сповіщення увімкнено! Щоб вимкнути їх, скористайтесь командою /mute.'
 
-lessonStartMessage = '🔔 Початок уроку: '
-breakMessages = [
+lessonMessage = '🔔 Початок уроку'
+breakMessage = '🎉 ПЕРЕРВА'
+minsUkr = 'хв'
+fiveMinsToStart = '🔔 Заняття розпочнуться через 5 хвилин! \n'
+nextLessonUkr = 'Наступний урок: '
+breakMotivMessages = [
     'Час для короткого відпочинку!',
+    'Вдихни глибоко і розслабся!',
+    'Насолодися моментом тиші.',
     'Відновлюй сили, попереду нові знання.',
     'Зроби перерву, ти на це заслуговуєш.',
     'Кілька хвилин для себе.',
     'Переключись на щось приємне.',
+    'Подумай про щось приємне.',
     'Час для чаю або кави!',
     'Розслабся, скоро продовжимо.',
     'Невеличка пауза для великих звершень.'
 ]
+
 endOfDayMessages = [
     'Це був останній урок на сьогодні! Вітаємо, ви впорались! 🎉',
     'Навчальний день завершено! Час відпочивати. ✨',
@@ -71,15 +81,19 @@ endOfDayMessages = [
     'На сьогодні все! Набирайтесь сил на завтра.'
 ]
 
+day = 60 * 60 * 24
+twoMins = 2 * 60
+pollTimeout = 55
+
 
 def loadFiles():
-    global lastUpdate, Timetable
+    global lastUpdate, TIMETABLE
     global Users
     try:
         with open('config.json', 'r', encoding='ascii') as file:
             data = json.load(file)
         lastUpdate = data['lastUpdate']
-        Timetable = data['Timetable']
+        TIMETABLE = data['TIMETABLE']
         print('Successfully loaded config.json')
 
         with open('users.json', 'r', encoding='utf-8') as file:
@@ -110,17 +124,13 @@ def makeSchedule():
 
             for day in range(daysPerWeek):
                 schedule[name][group % 2].append([])
-                prevCell = None
 
                 for lesson in range(lessonsPerDay):
-                    rowInExcel = startingRow + day*(lessonsPerDay+1) + lesson
+                    rowInExcel = startingRow + day * (lessonsPerDay + 1) + lesson
                     lessonCell = scheduleExcel.cell(row=rowInExcel, column=group)
                     if isMerged(lessonCell):
-                        lessonCell = scheduleExcel.cell(row=rowInExcel, column=group-1)
-
-                    if lessonCell.value or not prevCell:
-                        schedule[name][group % 2][day].append(lessonCell.value)
-                        prevCell = lessonCell.value
+                        lessonCell = scheduleExcel.cell(row=rowInExcel, column=group - 1)
+                    schedule[name][group % 2][day].append(lessonCell.value)
 
         with open('schedule.json', 'w', encoding='utf-8') as scheduleFile:
             json.dump(schedule, scheduleFile, indent=2, ensure_ascii=False)
@@ -130,7 +140,6 @@ def makeSchedule():
         print('Exception occured while making schedule:', e)
         sys.exit()
 
-# Schedule = makeSchedule()
 
 def sendMessage(chatID, text, keyboard={}):
     params = {'chat_id': chatID, 'text': text}
@@ -175,19 +184,78 @@ def uploadSchedule(document):
 
     except Exception as e:
         os.remove('schedule.xlsx')
-        os.rename('schedule_backup.xlsx','schedule.xlsx')
+        os.rename('schedule_backup.xlsx', 'schedule.xlsx')
         print('Error uploading schedule:', e)
         sendMessage(ADMIN, f'Error uploading schedule: {e}')
 
 
+def makeTimePoints(now):  # Now
+    global TimePoints
+    TimePoints = []
+    for timePoint in TIMETABLE:
+        hour, min = timePoint.split(':')
+        hour, min = int(hour), int(min)
+        timeParams = (now.tm_year, now.tm_mon, now.tm_mday,
+                      hour, min, 0, now.tm_wday, now.tm_yday, now.tm_isdst)
+        TimePoints.append(time.struct_time(timeParams))
+
+
 def notify():
-    pass
+    if Now.tm_wday == 6:
+        return
+
+    for ID, user in Users.items():
+        if not user.get('sendAuto'):
+            continue
+
+        if user.get('stage') < 5:
+            if NextTimePoint == 0:
+                sendMessage(ID, fiveMinsToStart)
+            elif NextTimePoint % 2:
+                sendMessage(ID, lessonMessage)
+            else:
+                sendMessage(ID, breakMessage)
+            continue
+
+        todaySched = Schedule[user['group']][user['half']][Now.tm_wday]
+        if NextTimePoint == 0:
+            sendMessage(ID, (fiveMinsToStart + '\n' if todaySched[0] else '') + makeDaySched(user))
+
+        elif NextTimePoint % 2:
+            if todaySched[NextTimePoint // 2]:
+                sendMessage(ID, lessonMessage + ' ' + todaySched[NextTimePoint // 2])
+
+        else:
+            if NextTimePoint == 14 or (todaySched[NextTimePoint // 2 - 1] and not todaySched[NextTimePoint // 2]):
+                sendMessage(ID, random.choice(endOfDayMessages))
+
+            elif todaySched[NextTimePoint // 2]:
+                breakStart, breakFinish = TimePoints[NextTimePoint], TimePoints[NextTimePoint + 1]
+                breakDuration = breakFinish.tm_hour * 60 + breakFinish.tm_min - breakStart.tm_hour * 60 - breakStart.tm_min
+                sendMessage(ID, f'{breakMessage} {breakDuration} {minsUkr}! {random.choice(breakMotivMessages)}\n'
+                            + nextLessonUkr + todaySched[NextTimePoint // 2])
+
+            else:
+                continue
+
+
+def makeDaySched(info, tomorrow=False):
+    message = schedForDay + (weekdaysUkr[(Now.tm_wday + 1) % 7] if tomorrow else todayUkr) + ': \n'
+    daySched = Schedule[info['group']][info['half']][(Now.tm_wday + tomorrow) % 7][:-1]
+
+    for n, lesson in enumerate(daySched):
+        message += f'\n{n + 1}. {TIMETABLE[2 * n + 1]}-{TIMETABLE[2 * n + 2]} - {lesson if lesson else '---'}'
+        if not tomorrow and (n == (NextTimePoint + 1) // 2 - 1):
+            message += youAreHere
+    return message
+
 
 def reactToMessage(update):
+    global UpdateUsers
     if 'message' not in update:
         return
 
-    chatID = update['message']['chat']['id']
+    chatID = str(update['message']['chat']['id'])
 
     if 'document' in update['message'] and chatID == ADMIN:
         uploadSchedule(update['message']['document'])
@@ -202,6 +270,7 @@ def reactToMessage(update):
         sendMessage(chatID, startMessage)
         sendMessage(chatID, askRole, keyboard=keyboardRole)
         Users[chatID]['stage'] = 1
+        UpdateUsers = True
 
     elif text == '/help':
         sendMessage(chatID, helpMessage)
@@ -209,20 +278,29 @@ def reactToMessage(update):
     elif text == '/mute':
         Users[chatID]['sendAuto'] = False
         sendMessage(chatID, muteAnswer)
+        UpdateUsers = True
 
     elif text == '/unmute':
         Users[chatID]['sendAuto'] = True
         sendMessage(chatID, unmuteAnswer)
+        UpdateUsers = True
 
-    elif text == '/sched' or text == '/today':
-        pass
+    elif text in ('/sched', '/today', '/tomorrow'):
+        info = Users.get(chatID)
+        if not info or info.get('stage', 0) < 5:
+            sendMessage(chatID, scheduleSetupError)
+            return
 
-    elif text == '/tomorrow':
-        pass
+        tomorrow = text == '/tomorrow'
+        if (Now.tm_wday + tomorrow) % 7 == 6:
+            sendMessage(chatID, weekendMessage)
+            return
+
+        sendMessage(chatID, makeDaySched(info, tomorrow=tomorrow))
 
     else:
         stage = Users.get(chatID, {}).get('stage')
-
+        UpdateUsers = True
         if stage == 1 and text.lower() in answerRole:
             if text.lower() == answerRole[0]:
                 Users[chatID]['role'] = 'student'
@@ -248,8 +326,83 @@ def reactToMessage(update):
 
         elif stage == 4 and text in ('1', '2'):
             Users[chatID]['half'] = int(text) - 1
-            sendMessage(chatID, finalMessage)
+            sendMessage(chatID, finalMessage, keyboard={'remove_keyboard': True})
             Users[chatID]['stage'] = 5
 
         else:
+            UpdateUsers = False
             sendMessage(chatID, unrecognizedMessage)
+
+
+def getUpdates(offset=None, timeout=pollTimeout):
+    try:
+        params = {'offset': offset, 'timeout': timeout}
+        response = requests.get(API_URL + '/getUpdates', params=params, timeout=timeout + 10)
+        response.raise_for_status()
+        return response.json()['result']
+    except requests.exceptions.RequestException as e:
+        print('Error getting updates: ', e)
+        return []
+
+
+def saveToFiles():
+    global UpdateUsers
+    try:
+        with open('config.json', 'w', encoding='ascii') as configFile:
+            json.dump({'lastUpdate': lastUpdate, 'TIMETABLE': TIMETABLE}, configFile, indent=2)
+
+        if UpdateUsers:
+            with open('users.json', 'w', encoding='utf-8') as usersFile:
+                json.dump(Users, usersFile, indent=2, ensure_ascii=False)
+            UpdateUsers = False
+
+    except Exception as e:
+        print('Error occurred while trying to save config.json or/and users.json', e)
+
+
+if __name__ == '__main__':
+    Now = time.localtime()
+    TimePoints = []
+    NextTimePoint = 0
+    lastUpdate = None
+    TIMETABLE = []
+    Users = {}
+    UpdateUsers = False
+
+    loadFiles()
+    Schedule = makeSchedule()
+    makeTimePoints(Now)
+
+
+    current_time_mk = time.mktime(Now)
+    while NextTimePoint < 15 and current_time_mk >= time.mktime(TimePoints[NextTimePoint]) + twoMins:
+        NextTimePoint += 1
+
+    if NextTimePoint >= 15:
+        makeTimePoints(time.localtime(current_time_mk + day))
+        NextTimePoint = 0
+
+    print("Bot started")
+    sendMessage(ADMIN, 'Bot started')
+
+    while True:
+        Now = time.localtime()
+        current_time_mk = time.mktime(Now)
+        timeToNextEvent = time.mktime(TimePoints[NextTimePoint]) - current_time_mk
+
+        if timeToNextEvent <= 0:
+            if abs(timeToNextEvent) < twoMins:
+                notify()
+
+            if NextTimePoint < 14:
+                NextTimePoint += 1
+            else:
+                makeTimePoints(time.localtime(current_time_mk + day))
+                NextTimePoint = 0
+
+        updates = getUpdates(lastUpdate, max(5, min(pollTimeout, int(timeToNextEvent))))
+        for update in updates:
+            reactToMessage(update)
+            lastUpdate = update['update_id'] + 1
+
+        saveToFiles()
