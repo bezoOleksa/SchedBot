@@ -47,7 +47,7 @@ scheduleSetupError = 'Будь ласка, спершу завершіть на�
 weekendMessage = 'Цей день вихідний! Відпочивайте. 🥳'
 schedForDay = '🗓️ Ваш розклад на '
 todayUkr = 'сьогодні'
-youAreHere = '<-- 👈 Ви тут'
+youAreHere = ' <-- 👈 Ви тут'
 weekdaysUkr = ['понеділок', 'вівторок', 'середу', 'четвер', 'п\'ятницю', 'cуботу', 'неділю']
 
 muteAnswer = '✅ Автоматичні сповіщення вимкнено. Щоб увімкнути їх знову, скористайтесь командою /unmute.'
@@ -83,6 +83,7 @@ endOfDayMessages = [
 
 day = 60 * 60 * 24
 twoMins = 2 * 60
+timezonesDiff = 2 * 60 * 60
 pollTimeout = 55
 
 
@@ -90,13 +91,13 @@ def loadFiles():
     global lastUpdate, TIMETABLE
     global Users
     try:
-        with open('config.json', 'r', encoding='ascii') as file:
+        with open('/storage/config.json', 'r', encoding='ascii') as file:
             data = json.load(file)
         lastUpdate = data['lastUpdate']
         TIMETABLE = data['TIMETABLE']
         print('Successfully loaded config.json')
 
-        with open('users.json', 'r', encoding='utf-8') as file:
+        with open('/storage/users.json', 'r', encoding='utf-8') as file:
             Users = json.load(file)
         print('Successfully loaded users.json')
 
@@ -112,7 +113,7 @@ def makeSchedule():
     startingRow = 13
 
     try:
-        excelFile = openpyxl.load_workbook('./schedule.xlsx')
+        excelFile = openpyxl.load_workbook('/storage/schedule.xlsx')
         scheduleExcel = excelFile.active
         isMerged = lambda cell: isinstance(cell, openpyxl.cell.cell.MergedCell)
         groupNames = groups['9'] + groups['10'] + groups['11']  # grades 9, 10 and 11 possible only
@@ -132,7 +133,7 @@ def makeSchedule():
                         lessonCell = scheduleExcel.cell(row=rowInExcel, column=group - 1)
                     schedule[name][group % 2][day].append(lessonCell.value)
 
-        with open('schedule.json', 'w', encoding='utf-8') as scheduleFile:
+        with open('/storage/schedule.json', 'w', encoding='utf-8') as scheduleFile:
             json.dump(schedule, scheduleFile, indent=2, ensure_ascii=False)
         return schedule
 
@@ -161,32 +162,47 @@ def sendMessage(chatID, text, keyboard={}):
 
 def uploadSchedule(document):
     global Schedule
-    if document.get('file_name') != 'schedule.xlsx':
-        sendMessage(ADMIN, 'Please upload file named schedule.xlsx to update schedule')
-        return
-
     try:
-        os.rename('schedule.xlsx', 'schedule_backup.xlsx')
+        os.rename('/storage/schedule.xlsx', '/storage/schedule_backup.xlsx')
         fileID = document.get('file_id')
         getFile = requests.get(API_URL + '/getFile', params={'file_id': fileID})
         getFile.raise_for_status()
         filePath = getFile.json()['result']['file_path']
 
         newFile = requests.get(f'https://api.telegram.org/file/bot{TOKEN}/{filePath}')
-        with open('schedule.xlsx', 'wb') as file:
+        with open('/storage/schedule.xlsx', 'wb') as file:
             for chunk in newFile.iter_content(chunk_size=8192):
                 if chunk:
                     file.write(chunk)
 
         Schedule = makeSchedule()
         sendMessage(ADMIN, 'Successfully updated schedule.xlsx file')
-        os.remove('schedule_backup.xlsx')
+        os.remove('/storage/schedule_backup.xlsx')
 
     except Exception as e:
-        os.remove('schedule.xlsx')
-        os.rename('schedule_backup.xlsx', 'schedule.xlsx')
+        os.remove('/storage/schedule.xlsx')
+        os.rename('/storage/schedule_backup.xlsx', '/storage/schedule.xlsx')
         print('Error uploading schedule:', e)
         sendMessage(ADMIN, f'Error uploading schedule: {e}')
+
+
+def uploadTimetable(document):
+    global TIMETABLE, rerun
+    try:
+        prevTimetable = TIMETABLE
+        fileID = document.get('file_id')
+        getFile = requests.get(API_URL + '/getFile', params={'file_id': fileID})
+        getFile.raise_for_status()
+        filePath = getFile.json()['result']['file_path']
+        newFile = requests.get(f'https://api.telegram.org/file/bot{TOKEN}/{filePath}')
+        newFile.raise_for_status()
+        TIMETABLE = json.loads(newFile.text)
+        rerun = True
+
+    except Exception as e:
+        TIMETABLE = prevTimetable
+        print('Error uploading timetable:', e)
+        sendMessage(ADMIN, f'Error uploading timetable: {e}')
 
 
 def makeTimePoints(now):  # Now
@@ -244,8 +260,8 @@ def makeDaySched(info, tomorrow=False):
     daySched = Schedule[info['group']][info['half']][(Now.tm_wday + tomorrow) % 7][:-1]
 
     for n, lesson in enumerate(daySched):
-        message += f'\n{n + 1}. {TIMETABLE[2 * n + 1]}-{TIMETABLE[2 * n + 2]} - {lesson if lesson else '---'}'
-        if not tomorrow and (n == (NextTimePoint + 1) // 2 - 1):
+        message += f'\n{n + 1}. {TIMETABLE[2 * n + 1]}-{TIMETABLE[2 * n + 2]} - {lesson or "---"}'
+        if not tomorrow and (n == NextTimePoint // 2) and NextTimePoint:
             message += youAreHere
     return message
 
@@ -258,8 +274,14 @@ def reactToMessage(update):
     chatID = str(update['message']['chat']['id'])
 
     if 'document' in update['message'] and chatID == ADMIN:
-        uploadSchedule(update['message']['document'])
-        return
+        if update['message']['document'].get('file_name') == 'schedule.xlsx':
+            uploadSchedule(update['message']['document'])
+        elif update['message']['document'].get('file_name') == 'timetable.json':
+            uploadTimetable(update['message']['document'])
+        else:
+            sendMessage(ADMIN, 'Please upload file named schedule.xlsx to update schedule; ' \
+                             + 'timetable.json to update timetable')
+            return
 
     if 'text' not in update['message']:
         return
@@ -348,11 +370,11 @@ def getUpdates(offset=None, timeout=pollTimeout):
 def saveToFiles():
     global UpdateUsers
     try:
-        with open('config.json', 'w', encoding='ascii') as configFile:
+        with open('/storage/config.json', 'w', encoding='ascii') as configFile:
             json.dump({'lastUpdate': lastUpdate, 'TIMETABLE': TIMETABLE}, configFile, indent=2)
 
         if UpdateUsers:
-            with open('users.json', 'w', encoding='utf-8') as usersFile:
+            with open('/storage/users.json', 'w', encoding='utf-8') as usersFile:
                 json.dump(Users, usersFile, indent=2, ensure_ascii=False)
             UpdateUsers = False
 
@@ -361,48 +383,52 @@ def saveToFiles():
 
 
 if __name__ == '__main__':
-    Now = time.localtime()
-    TimePoints = []
-    NextTimePoint = 0
-    lastUpdate = None
-    TIMETABLE = []
-    Users = {}
-    UpdateUsers = False
-
-    loadFiles()
-    Schedule = makeSchedule()
-    makeTimePoints(Now)
-
-
-    current_time_mk = time.mktime(Now)
-    while NextTimePoint < 15 and current_time_mk >= time.mktime(TimePoints[NextTimePoint]) + twoMins:
-        NextTimePoint += 1
-
-    if NextTimePoint >= 15:
-        makeTimePoints(time.localtime(current_time_mk + day))
+    rerun = True
+    while rerun:
+        rerun = False
+        Now = time.localtime(time.time() + timezonesDiff)
+        TimePoints = []
         NextTimePoint = 0
+        lastUpdate = None
+        TIMETABLE = []
+        Users = {}
+        UpdateUsers = False
 
-    print("Bot started")
-    sendMessage(ADMIN, 'Bot started')
+        loadFiles()
+        Schedule = makeSchedule()
+        makeTimePoints(Now)
 
-    while True:
-        Now = time.localtime()
         current_time_mk = time.mktime(Now)
-        timeToNextEvent = time.mktime(TimePoints[NextTimePoint]) - current_time_mk
+        while NextTimePoint < 15 and current_time_mk >= time.mktime(TimePoints[NextTimePoint]) + twoMins:
+            NextTimePoint += 1
 
-        if timeToNextEvent <= 0:
-            if abs(timeToNextEvent) < twoMins:
-                notify()
+        if NextTimePoint >= 15:
+            makeTimePoints(time.localtime(current_time_mk + day))
+            NextTimePoint = 0
 
-            if NextTimePoint < 14:
-                NextTimePoint += 1
-            else:
-                makeTimePoints(time.localtime(current_time_mk + day))
-                NextTimePoint = 0
+        print(f"{Now.tm_mday}.{Now.tm_mon}.{Now.tm_year} {Now.tm_hour}:{Now.tm_min}:{Now.tm_sec} Bot started")
+        sendMessage(ADMIN, 'Bot started')
 
-        updates = getUpdates(lastUpdate, max(5, min(pollTimeout, int(timeToNextEvent))))
-        for update in updates:
-            reactToMessage(update)
-            lastUpdate = update['update_id'] + 1
+        while True:
+            Now = time.localtime(time.time() + timezonesDiff)
+            current_time_mk = time.mktime(Now)
+            timeToNextEvent = time.mktime(TimePoints[NextTimePoint]) - current_time_mk
 
-        saveToFiles()
+            if timeToNextEvent <= 0:
+                if abs(timeToNextEvent) < twoMins:
+                    notify()
+
+                if NextTimePoint < 14:
+                    NextTimePoint += 1
+                else:
+                    makeTimePoints(time.localtime(current_time_mk + day))
+                    NextTimePoint = 0
+
+            updates = getUpdates(lastUpdate, max(5, min(pollTimeout, int(timeToNextEvent))))
+            for update in updates:
+                reactToMessage(update)
+                lastUpdate = update['update_id'] + 1
+
+            saveToFiles()
+            if rerun:
+                break
