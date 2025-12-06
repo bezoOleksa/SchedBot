@@ -19,7 +19,17 @@ startMessage = 'Вітаю у боті для розкладу занять! �
                + 'Для розкладу на завтра, надішліть /tomorrow\n\n' \
                + 'Для початку, давайте налаштуємо ваш розклад.'
 
-helpMessage = startMessage  # needs to be done!
+helpMessage = '📚 Довідка по командах бота-розкладу\n\n' \
+              + 'Це ваш помічник для швидкого доступу до розкладу занять та автоматичних сповіщень.\n\n' \
+              + '--- Управління Розкладом ---\n' \
+              + '/today або /sched — Показати ваш персональний розклад на поточний навчальний день.\n' \
+              + '/tomorrow — Показати розклад на наступний навчальний день.\n\n' \
+              + '--- Керування Сповіщеннями ---\n' \
+              + '/unmute — Увімкнути автоматичні повідомлення про початок уроків та перерв.\n' \
+              + '/mute — Вимкнути автоматичні повідомлення.\n\n' \
+              + '--- Налаштування та Допомога ---\n' \
+              + '/start — Розпочати або повторно пройти налаштування профілю (клас, група, підгрупа).\n' \
+              + '/help — Показати це довідкове повідомлення.\n\n'
 
 askRole = 'Будь ласка, оберіть вашу роль:'
 keyboardRole = {'keyboard': [[{'text': 'Учень'}, {'text': 'Вчитель'}]],
@@ -217,7 +227,7 @@ def makeTimePoints(now):  # Now
 
 
 def notify():
-    if Now.tm_wday == 6:
+    if Now.tm_wday in (5, 6):
         return
 
     for ID, user in Users.items():
@@ -242,10 +252,10 @@ def notify():
                 sendMessage(ID, lessonMessage + ' ' + todaySched[NextTimePoint // 2])
 
         else:
-            if NextTimePoint == 14 or (todaySched[NextTimePoint // 2 - 1] and not todaySched[NextTimePoint // 2]):
+            if (NextTimePoint == 14 or not todaySched[NextTimePoint // 2]) and todaySched[NextTimePoint // 2 - 1]:
                 sendMessage(ID, random.choice(endOfDayMessages))
 
-            elif todaySched[NextTimePoint // 2]:
+            elif todaySched[NextTimePoint // 2] and todaySched[NextTimePoint // 2 - 1]:
                 breakStart, breakFinish = TimePoints[NextTimePoint], TimePoints[NextTimePoint + 1]
                 breakDuration = breakFinish.tm_hour * 60 + breakFinish.tm_min - breakStart.tm_hour * 60 - breakStart.tm_min
                 sendMessage(ID, f'{breakMessage} {breakDuration} {minsUkr}! {random.choice(breakMotivMessages)}\n'
@@ -261,7 +271,7 @@ def makeDaySched(info, tomorrow=False):
 
     for n, lesson in enumerate(daySched):
         message += f'\n{n + 1}. {TIMETABLE[2 * n + 1]}-{TIMETABLE[2 * n + 2]} - {lesson or "---"}'
-        if not tomorrow and (n == NextTimePoint // 2) and NextTimePoint:
+        if not tomorrow and (n == (NextTimePoint - 1) // 2) and NextTimePoint:
             message += youAreHere
     return message
 
