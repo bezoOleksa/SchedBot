@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import shutil
 import requests
 import json
 import openpyxl
@@ -50,7 +51,12 @@ keyboardHalf = {'keyboard': [[{'text': '1'}, {'text': '2'}]],
                 'resize_keyboard': True, 'one_time_keyboard': True}
 
 finalMessage = 'Дякую! Налаштування завершено. Тепер ви будете отримувати повідомлення з вашим персональним розкладом.'
-teacherNote = 'Наразі функціонал для вчителів ще не розроблено, але ви все одно можете отримувати повідомлення про початок і кінець уроку. Дякуємо за розуміння!'
+
+teacherNote = 'Роль вчителя активована.\n' \
+            + 'Наразі Ви можете отримувати сповіщення про початок і завершення уроків згідно з розкладом ліцею.\n' \
+            + 'Розклад предметів для кожного вчителя буде впроваджено у наступних оновленнях.\n' \
+            + 'Дякую за розуміння!'
+
 unrecognizedMessage = 'Вибачте, я не зрозумів вашу відповідь. Будь ласка, скористайтесь кнопками або командами. Для допомоги надішліть /help.'
 
 scheduleSetupError = 'Будь ласка, спершу завершіть налаштування за допомогою команди /start, щоб отримати персональний розклад.'
@@ -62,6 +68,10 @@ weekdaysUkr = ['понеділок', 'вівторок', 'середу', 'чет
 
 muteAnswer = '✅ Автоматичні сповіщення вимкнено. Щоб увімкнути їх знову, скористайтесь командою /unmute.'
 unmuteAnswer = '✅ Автоматичні сповіщення увімкнено! Щоб вимкнути їх, скористайтесь командою /mute.'
+
+nzText = 'Посилання на нові знання'
+nzButtonText = 'Перейти на nz.ua'
+nzUrl = 'https://nz.ua/'
 
 lessonMessage = '🔔 Початок уроку'
 breakMessage = '🎉 ПЕРЕРВА'
@@ -101,6 +111,10 @@ def loadFiles():
     global lastUpdate, TIMETABLE
     global Users
     try:
+        ForceUploading = False
+        if ForceUploading:
+            shutil.move('./config.json', '/storage/config.json')
+            
         with open('/storage/config.json', 'r', encoding='ascii') as file:
             data = json.load(file)
         lastUpdate = data['lastUpdate']
@@ -148,7 +162,7 @@ def makeSchedule():
         return schedule
 
     except Exception as e:
-        print('Exception occured while making schedule:', e)
+        print('Exception occurred while making schedule:', e)
         sys.exit()
 
 
@@ -156,11 +170,12 @@ def sendMessage(chatID, text, keyboard={}):
     params = {'chat_id': chatID, 'text': text}
     if keyboard:
         params['reply_markup'] = json.dumps(keyboard)
+
     try:
         send = requests.post(API_URL + '/sendMessage', params=params, timeout=10)
         send.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print('Error ocurred sending message. Error:', e, end='; ')
+        print('Error occurred sending message. Error:', e, end='; ')
         time.sleep(0.4 + random.random() / 2)
         try:
             send = requests.post(API_URL + '/sendMessage', params=params, timeout=10)
@@ -207,6 +222,7 @@ def uploadTimetable(document):
         newFile = requests.get(f'https://api.telegram.org/file/bot{TOKEN}/{filePath}')
         newFile.raise_for_status()
         TIMETABLE = json.loads(newFile.text)
+        print('Successfully uploaded new timetable:\n', TIMETABLE)
         rerun = True
 
     except Exception as e:
@@ -245,7 +261,8 @@ def notify():
 
         todaySched = Schedule[user['group']][user['half']][Now.tm_wday]
         if NextTimePoint == 0:
-            sendMessage(ID, (fiveMinsToStart + '\n' if todaySched[0] else '') + makeDaySched(user))
+            if any(todaySched):
+                sendMessage(ID, (fiveMinsToStart + '\n' if todaySched[0] else '') + makeDaySched(user))
 
         elif NextTimePoint % 2:
             if todaySched[NextTimePoint // 2]:
@@ -274,6 +291,16 @@ def makeDaySched(info, tomorrow=False):
         if not tomorrow and (n == (NextTimePoint - 1) // 2) and NextTimePoint:
             message += youAreHere
     return message
+
+
+def sendFiles():
+    try:
+        for fileName in ('users.json', 'config.json', 'schedule.json', 'schedule.xlsx'):
+            with open('/storage/'+fileName, 'rb') as file:
+                requests.post(API_URL+'/sendDocument', params={'chat_id': ADMIN}, files={'document': (fileName, file)})
+    except Exception as e:
+        sendMessage(ADMIN, f'Error occurred during sending files: {e}')
+        print(f'Error occurred during sending files: {e}')
 
 
 def reactToMessage(update):
@@ -307,6 +334,9 @@ def reactToMessage(update):
     elif text == '/help':
         sendMessage(chatID, helpMessage)
 
+    elif text == '/files' and chatID == ADMIN:
+        sendFiles()
+
     elif text == '/mute':
         Users[chatID]['sendAuto'] = False
         sendMessage(chatID, muteAnswer)
@@ -316,6 +346,9 @@ def reactToMessage(update):
         Users[chatID]['sendAuto'] = True
         sendMessage(chatID, unmuteAnswer)
         UpdateUsers = True
+
+    elif text == '/nz':
+        sendMessage(chatID, nzText, keyboard={'inline_keyboard': [[{'text': nzButtonText, 'url': nzUrl}]]})
 
     elif text in ('/sched', '/today', '/tomorrow'):
         info = Users.get(chatID)
@@ -340,9 +373,7 @@ def reactToMessage(update):
                 Users[chatID]['stage'] = 2
             else:
                 Users[chatID]['role'] = 'teacher'
-                sendMessage(chatID, teacherNote)
-                sendMessage(chatID, askRole, keyboard=keyboardRole)
-                Users[chatID]['stage'] = 1
+                sendMessage(chatID, teacherNote, keyboard={'remove_keyboard': True})
 
         elif stage == 2 and text in groups:
             Users[chatID]['grade'] = text
@@ -418,6 +449,7 @@ if __name__ == '__main__':
 
         print(f"{Now.tm_mday}.{Now.tm_mon}.{Now.tm_year} {Now.tm_hour}:{Now.tm_min}:{Now.tm_sec} Bot started")
         sendMessage(ADMIN, 'Bot started')
+        print(f'Timetable = {TIMETABLE}')
 
         while True:
             Now = time.localtime(time.time() + timezonesDiff)
